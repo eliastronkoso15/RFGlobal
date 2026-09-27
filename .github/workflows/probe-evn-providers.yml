@@ -1,0 +1,50 @@
+name: Probe — FlyOne + Aegean EVN (no secrets)
+
+# Validation-only, same pattern as probe-wizz-evn: no secrets, snapshots go
+# to the runner's local filesystem and are uploaded as artifacts. Gates:
+#   flyone     — dormant since 2026-05; verifies the FareView Bearer-token
+#                capture still works, and from GHA runner IPs
+#   aegean_air — verifies Akamai tolerance from GHA IPs for the EVN routes
+#                (historically EVN yields few fares — probe measures how few)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [flyone, aegean_air]
+    env:
+      DATA_ROOT: ./data/price-snapshots
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npx playwright install chromium --with-deps
+
+      - name: Collect oneway (local FS, no S3)
+        run: node collect.mjs --provider ${{ matrix.provider }} --landing evn --schedule manual --type oneway
+
+      - name: Upload snapshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-${{ matrix.provider }}
+          path: data/price-snapshots/
+          if-no-files-found: warn

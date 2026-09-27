@@ -19,6 +19,30 @@ export const PROVIDER_CONFIGS = {
     },
   },
 
+  aegean_air: {
+    id: 'aegean_air',
+    name: 'Aegean Airlines Low Fare Calendar',
+    type: 'scraper',
+    priority: 4,
+    enabled: true,
+    defaults: {
+      currency: 'EUR',
+      monthsAhead: 2,
+    },
+  },
+
+  flyone: {
+    id: 'flyone',
+    name: 'FlyOne FareView',
+    type: 'scraper',
+    priority: 5,
+    enabled: true,
+    defaults: {
+      currency: 'EUR',
+      monthsAhead: 2,
+    },
+  },
+
   ryanair_fare_finder: {
     id: 'ryanair_fare_finder',
     name: 'Ryanair Fare Finder',

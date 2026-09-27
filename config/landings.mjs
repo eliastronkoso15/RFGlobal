@@ -13,7 +13,7 @@ export const LANDINGS = [
     homeAirportIata: 'EVN',
     homeCity: 'Yerevan',
     currency: 'EUR',
-    enabledProviders: ['wizz_air'],
+    enabledProviders: ['wizz_air', 'aegean_air', 'flyone'],
     providerSettings: {
       wizz_air: {
         currency: 'EUR',
@@ -21,6 +21,16 @@ export const LANDINGS = [
         // Routes that consistently return zero fares from EVN — skip to
         // save farechart calls.
         skipRoutes: ['EIN', 'PFO'],
+      },
+      aegean_air: {
+        currency: 'EUR',
+        monthsAhead: 2,
+      },
+      flyone: {
+        currency: 'EUR',
+        monthsAhead: 2,
+        // FlyOne FareView mixes in codeshare/connecting itineraries — keep direct only.
+        directOnly: true,
       },
     },
   },
