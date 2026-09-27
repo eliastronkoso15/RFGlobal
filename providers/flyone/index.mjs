@@ -35,6 +35,7 @@
 
 import { BaseProvider }    from '../base.mjs';
 import { PROVIDER_CONFIGS } from '../../config/providers.mjs';
+import { addCalendarPoint } from '../../lib/calendar-dump.mjs';
 
 const FARE_VIEW_URL = 'https://bookings.flyone.eu/FareView';
 const API_URL       = 'https://api2.flyone.eu/api/search/get-route-fare';
@@ -146,6 +147,22 @@ class FlyOneProvider extends BaseProvider {
     this.monthsAhead = config.defaults?.monthsAhead ?? 2;
     this.headless   = config.defaults?.headless   ?? true;
     this.directOnly = config.defaults?.directOnly ?? true;
+  }
+
+  /** Accumulate per-day price points for the date-search calendar
+   *  (calendar/flyone/{landing}/all.json — same pattern as aegean/wizz).
+   *  The collect runner persists this.lastCalendar after each run. */
+  _calAddOut(byDest) {
+    for (const [dest, points] of byDest) {
+      if (!DESTINATIONS_EVN[dest]) continue;
+      for (const p of points) addCalendarPoint(this._calRoutes ??= {}, dest, 'out', p.depDate, p.price, '5F');
+    }
+    this.lastCalendar = { scope: 'all', routes: this._calRoutes };
+  }
+
+  _calAddIn(dest, points) {
+    for (const p of points) addCalendarPoint(this._calRoutes ??= {}, dest, 'in', p.depDate, p.price, '5F');
+    this.lastCalendar = { scope: 'all', routes: this._calRoutes };
   }
 
   /** Launch headless Chromium. */
@@ -348,6 +365,7 @@ class FlyOneProvider extends BaseProvider {
     try {
       const token  = await this._captureToken(context);
       const byDest = await this._collectOriginFares(token, origin);
+      this._calAddOut(byDest);
 
       // For each destination: pick the cheapest fare across all windows
       for (const [dest, points] of byDest) {
@@ -395,6 +413,7 @@ class FlyOneProvider extends BaseProvider {
 
       // 1. Collect outbound fares from origin
       const outboundByDest = await this._collectOriginFares(token, origin);
+      this._calAddOut(outboundByDest);
 
       // 2. For each destination that has outbound Friday fares,
       //    collect return fares (dest → origin direction)
@@ -413,6 +432,7 @@ class FlyOneProvider extends BaseProvider {
         try {
           const returnFares = await this._collectOriginFares(token, dest);
           const toOrigin = returnFares.get(origin) ?? [];
+          this._calAddIn(dest, toOrigin);
           if (toOrigin.length > 0) returnByDest.set(dest, toOrigin);
         } catch (err) {
           console.error(`  [flyone] return fares ${dest}: ${err.message}`);
@@ -485,6 +505,7 @@ class FlyOneProvider extends BaseProvider {
 
       // Collect outbound fares
       const outboundByDest = await this._collectOriginFares(token, origin);
+      this._calAddOut(outboundByDest);
 
       // Collect return fares for all known destinations
       const knownDests = [...outboundByDest.keys()].filter((d) => DESTINATIONS_EVN[d]);
@@ -495,6 +516,7 @@ class FlyOneProvider extends BaseProvider {
         try {
           const returnFares = await this._collectOriginFares(token, dest);
           const toOrigin = returnFares.get(origin) ?? [];
+          this._calAddIn(dest, toOrigin);
           if (toOrigin.length > 0) returnByDest.set(dest, toOrigin);
         } catch (err) {
           console.error(`  [flyone] return fares ${dest}: ${err.message}`);
