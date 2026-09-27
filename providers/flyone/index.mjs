@@ -22,8 +22,14 @@
  *   For round-trips: also query with origin=DEST to get EVN return fare.
  *   The return query is batched by destination to minimise calls.
  *
- * Booking deeplink:
- *   https://bookings.flyone.eu/?origin=EVN&destination=MXP
+ * Booking deeplink (format verified against the live site 2026-09-28 —
+ * the previous ?origin=&destination= shape was ignored by the site):
+ *   https://bookings.flyone.eu/FlightResult?depCityName=Yerevan+(EVN)
+ *     &depCity=EVN&arrCityName=Tbilisi+(TBS)&arrCity=TBS&adult=1&child=0
+ *     &infant=0&startDate=06-Oct-2026&endDate=&radio=on&promocode=
+ *     &currency=EUR&sid=998
+ *   One-way: radio=on + empty endDate. Round trip: NO radio param +
+ *   endDate=DD-MMM-YYYY (return-leg strip renders under the outbound list).
  *     &departureDate=2026-04-26&adults=1&tripType=OW
  */
 
@@ -90,13 +96,40 @@ function travelDates(monthsAhead = 2, stepDays = 7) {
   return dates;
 }
 
-/** Build a booking deeplink for FlyOne. */
+const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** ISO 'YYYY-MM-DD' → FlyOne's 'DD-MMM-YYYY' (e.g. '06-Oct-2026'). */
+function fmtFlyOneDate(iso) {
+  const [y, m, d] = String(iso).split('-');
+  return `${d}-${MONTHS_EN[Number(m) - 1]}-${y}`;
+}
+
+// City display names for the *CityName params. FlyOne's FlightResult page
+// wants "City (IATA)" labels alongside the codes.
+const ORIGIN_CITY = { EVN: 'Yerevan' };
+
+/** Build a booking deeplink for FlyOne (see header — verified live). */
 function buildDeeplink(origin, dest, depDate, retDate = null) {
-  const type = retDate ? 'RT' : 'OW';
-  let url = `${BOOK_URL}?origin=${origin}&destination=${dest}`
-          + `&departureDate=${depDate}&adults=1&tripType=${type}`;
-  if (retDate) url += `&returnDate=${retDate}`;
-  return url;
+  const oCity = ORIGIN_CITY[origin] ?? origin;
+  const dCity = DESTINATIONS_EVN[dest]?.city ?? dest;
+  const params = new URLSearchParams({
+    depCityName: `${oCity} (${origin})`,
+    depCity:     origin,
+    arrCityName: `${dCity} (${dest})`,
+    arrCity:     dest,
+    adult:  '1',
+    child:  '0',
+    infant: '0',
+    startDate: fmtFlyOneDate(depDate),
+    endDate:   retDate ? fmtFlyOneDate(retDate) : '',
+    // radio=on marks the search one-way; round trips must NOT send it.
+    ...(retDate ? {} : { radio: 'on' }),
+    promocode: '',
+    currency:  'EUR',
+    sid: '998',
+  });
+  return `https://bookings.flyone.eu/FlightResult?${params.toString()}`;
 }
 
 /** ISO date string → day-of-week (0=Sun, 1=Mon, …, 5=Fri, 6=Sat) */
