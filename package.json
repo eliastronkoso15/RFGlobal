@@ -1,0 +1,17 @@
+{
+  "name": "fare-calendar-collectors",
+  "version": "1.0.0",
+  "description": "Collectors for low-cost-carrier public fare calendars (Wizz Air farechart, Ryanair fare finder). Normalizes fares to a common schema and writes dated snapshots to local disk or S3.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "collect": "node collect.mjs",
+    "playwright:install": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2",
+    "playwright": "^1.49.0"
+  }
+}

@@ -1,0 +1,48 @@
+name: Probe — Wizz Air EVN (no secrets)
+
+# Validation-only run: collects Wizz Air EVN oneway fares on a GitHub-hosted
+# runner WITHOUT any secrets. With SNAPSHOT_BUCKET unset the snapshot store
+# falls back to the local filesystem, and Telegram notify is a no-op — the
+# run proves (or disproves) that Wizz's bot protection tolerates GHA runner
+# IPs before any AWS wiring exists. Results are uploaded as an artifact.
+#
+# Success = log shows fares for most destinations + artifact contains a
+# snapshot with prices. Bot-block manifests as timeouts / 0 fares / errors.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATA_ROOT: ./data/price-snapshots
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npx playwright install chromium --with-deps
+
+      - name: Collect (local FS, no S3)
+        run: node collect.mjs --provider wizz_air --landing evn --schedule manual --type oneway
+
+      - name: Upload snapshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-snapshots
+          path: data/price-snapshots/
+          if-no-files-found: warn

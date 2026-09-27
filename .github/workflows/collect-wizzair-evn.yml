@@ -1,0 +1,107 @@
+name: Collect Wizz Air Prices (EVN)
+
+# Schedule (carried over from the pre-2026-05 tiering):
+#   - oneway:  daily (primary EVN coverage, ~4 min)
+#   - weekend / holiday: Mon/Wed/Fri/Sun (~9 / ~7.5 min) — fares on a
+#     3-month horizon don't move meaningfully faster than every other day.
+#
+# ROLLOUT PHASE 2: types pinned to ["oneway"] until the daily runs prove
+# stable (see the commented block in the plan job for the phase-3 logic).
+#
+# Cron is intentionally odd-minute/off-peak: GitHub cron dispatch drifts by
+# hours at popular times. The API-side freshness window for GHA collectors
+# is 30h, so drift is absorbed.
+
+on:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  plan:
+    name: Plan matrix
+    runs-on: ubuntu-latest
+    outputs:
+      types: ${{ steps.set.outputs.types }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          # PHASE 2 (current): oneway only.
+          echo 'types=["oneway"]' >> "$GITHUB_OUTPUT"
+          # PHASE 3: replace the line above with the day-of-week logic:
+          #   if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          #     echo 'types=["oneway","weekend","holiday"]' >> "$GITHUB_OUTPUT"; exit 0
+          #   fi
+          #   DOW=$(date -u +%u)
+          #   case "$DOW" in
+          #     1|3|5|7) echo 'types=["oneway","weekend","holiday"]' >> "$GITHUB_OUTPUT" ;;
+          #     *)       echo 'types=["oneway"]' >> "$GITHUB_OUTPUT" ;;
+          #   esac
+
+  collect:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        type: ${{ fromJSON(needs.plan.outputs.types) }}
+    env:
+      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION:            ${{ secrets.AWS_REGION }}
+      SNAPSHOT_BUCKET:       ${{ secrets.SNAPSHOT_BUCKET }}
+      TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+      COLLECT_NOTIFY:        'off'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npx playwright install chromium --with-deps
+
+      - name: Determine schedule tag
+        id: schedule
+        run: |
+          HOUR=$(date -u +"%H")
+          if [ "$HOUR" -lt "14" ]; then echo "tag=morning" >> "$GITHUB_OUTPUT"; else echo "tag=evening" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Collect ${{ matrix.type }} fares (EVN)
+        run: node collect.mjs --provider wizz_air --landing evn --schedule ${{ steps.schedule.outputs.tag }} --type ${{ matrix.type }}
+
+      - name: Notify Telegram on workflow failure
+        if: failure()
+        run: |
+          [ -z "$TELEGRAM_BOT_TOKEN" ] && exit 0
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"⚠️ <b>Wizz EVN workflow failed</b> · ${{ matrix.type }}\n<a href=\\\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\\\">View run</a>\",\"parse_mode\":\"HTML\",\"disable_web_page_preview\":true}"
+
+  purge:
+    name: Purge API cache
+    needs: collect
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      API_URL:            ${{ secrets.API_URL }}
+      CACHE_PURGE_SECRET: ${{ secrets.CACHE_PURGE_SECRET }}
+    steps:
+      - name: POST /api/purge-cache
+        run: |
+          [ -z "$API_URL" ] && echo "API_URL not set — skipping purge" && exit 0
+          curl -s -X POST "$API_URL/api/purge-cache" \
+            -H "Authorization: Bearer $CACHE_PURGE_SECRET" \
+            | grep -q '"ok":true' && echo "✅ Cache purged" || echo "⚠️ Purge failed (non-critical)"
