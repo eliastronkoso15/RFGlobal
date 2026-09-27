@@ -1,0 +1,63 @@
+name: Collect FlyOne Prices (EVN)
+
+# FlyOne — Armenian national LCC, primary EVN carrier. Playwright captures a
+# Bearer token from bookings.flyone.eu/FareView, then plain fetches. All 3
+# trip types daily as a parallel matrix (~3-9 min each, free public minutes).
+
+on:
+  schedule:
+    - cron: '11 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        type: [oneway, weekend, holiday]
+    env:
+      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION:            eu-central-1   # not a secret — plain env
+      SNAPSHOT_BUCKET:       ${{ secrets.SNAPSHOT_BUCKET }}
+      TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+      COLLECT_NOTIFY:        'off'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install chromium --with-deps
+      - name: Determine schedule tag
+        id: schedule
+        run: |
+          HOUR=$(date -u +"%H")
+          if [ "$HOUR" -lt "14" ]; then echo "tag=morning" >> "$GITHUB_OUTPUT"; else echo "tag=evening" >> "$GITHUB_OUTPUT"; fi
+      - name: Collect ${{ matrix.type }} fares (EVN)
+        run: node collect.mjs --provider flyone --landing evn --schedule ${{ steps.schedule.outputs.tag }} --type ${{ matrix.type }}
+
+  purge:
+    name: Purge API cache
+    needs: collect
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      API_URL:            ${{ secrets.API_URL }}
+      CACHE_PURGE_SECRET: ${{ secrets.CACHE_PURGE_SECRET }}
+    steps:
+      - name: POST /api/purge-cache
+        run: |
+          [ -z "$API_URL" ] && echo "API_URL not set — skipping purge" && exit 0
+          curl -s -X POST "$API_URL/api/purge-cache" \
+            -H "Authorization: Bearer $CACHE_PURGE_SECRET" \
+            | grep -q '"ok":true' && echo "✅ Cache purged" || echo "⚠️ Purge failed (non-critical)"

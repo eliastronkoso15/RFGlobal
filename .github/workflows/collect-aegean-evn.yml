@@ -1,0 +1,84 @@
+name: Collect Aegean Prices (EVN)
+
+# Aegean from Yerevan: oneway + holiday daily; weekend only Tue/Sat —
+# EVN weekend historically yields ~0 fares (not a Sat-Tue leisure market).
+# NOTE: most Aegean EVN oneway fares exceed the €100 collect-time price
+# ceiling, so snapshots may hold few/zero fares while the cheapest-per-day
+# calendar (date-search hints) still fills — that alone justifies the run.
+
+on:
+  schedule:
+    - cron: '31 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  plan:
+    name: Plan matrix
+    runs-on: ubuntu-latest
+    outputs:
+      types: ${{ steps.set.outputs.types }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo 'types=["oneway","weekend","holiday"]' >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          DOW=$(date -u +%u)
+          case "$DOW" in
+            2|6) echo 'types=["oneway","weekend","holiday"]' >> "$GITHUB_OUTPUT" ;;
+            *)   echo 'types=["oneway","holiday"]' >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  collect:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        type: ${{ fromJSON(needs.plan.outputs.types) }}
+    env:
+      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION:            eu-central-1   # not a secret — plain env
+      SNAPSHOT_BUCKET:       ${{ secrets.SNAPSHOT_BUCKET }}
+      TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+      COLLECT_NOTIFY:        'off'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install chromium --with-deps
+      - name: Determine schedule tag
+        id: schedule
+        run: |
+          HOUR=$(date -u +"%H")
+          if [ "$HOUR" -lt "14" ]; then echo "tag=morning" >> "$GITHUB_OUTPUT"; else echo "tag=evening" >> "$GITHUB_OUTPUT"; fi
+      - name: Collect ${{ matrix.type }} fares (EVN)
+        run: node collect.mjs --provider aegean_air --landing evn --schedule ${{ steps.schedule.outputs.tag }} --type ${{ matrix.type }}
+
+  purge:
+    name: Purge API cache
+    needs: collect
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      API_URL:            ${{ secrets.API_URL }}
+      CACHE_PURGE_SECRET: ${{ secrets.CACHE_PURGE_SECRET }}
+    steps:
+      - name: POST /api/purge-cache
+        run: |
+          [ -z "$API_URL" ] && echo "API_URL not set — skipping purge" && exit 0
+          curl -s -X POST "$API_URL/api/purge-cache" \
+            -H "Authorization: Bearer $CACHE_PURGE_SECRET" \
+            | grep -q '"ok":true' && echo "✅ Cache purged" || echo "⚠️ Purge failed (non-critical)"
