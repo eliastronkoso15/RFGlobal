@@ -27,17 +27,16 @@ jobs:
       - id: set
         shell: bash
         run: |
-          # PHASE 2 (current): oneway only.
-          echo 'types=["oneway"]' >> "$GITHUB_OUTPUT"
-          # PHASE 3: replace the line above with the day-of-week logic:
-          #   if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          #     echo 'types=["oneway","weekend","holiday"]' >> "$GITHUB_OUTPUT"; exit 0
-          #   fi
-          #   DOW=$(date -u +%u)
-          #   case "$DOW" in
-          #     1|3|5|7) echo 'types=["oneway","weekend","holiday"]' >> "$GITHUB_OUTPUT" ;;
-          #     *)       echo 'types=["oneway"]' >> "$GITHUB_OUTPUT" ;;
-          #   esac
+          # PHASE 3 (since 2026-09-27, Kasada probe passed): oneway daily;
+          # weekend + holiday on Mon/Wed/Fri/Sun. Manual dispatch runs all 3.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo 'types=["oneway","weekend","holiday"]' >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          DOW=$(date -u +%u)
+          case "$DOW" in
+            1|3|5|7) echo 'types=["oneway","weekend","holiday"]' >> "$GITHUB_OUTPUT" ;;
+            *)       echo 'types=["oneway"]' >> "$GITHUB_OUTPUT" ;;
+          esac
 
   collect:
     needs: plan
