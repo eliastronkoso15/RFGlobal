@@ -13,6 +13,9 @@ export const LANDINGS = [
     homeAirportIata: 'EVN',
     homeCity: 'Yerevan',
     currency: 'EUR',
+    // EVN-specific ceilings (EUR defaults are 100/200/200): 2-4k-km market,
+    // "cheap" is structurally pricier here.
+    priceCeilings: { one_way: 150, weekend: 250, holiday: 250 },
     enabledProviders: ['wizz_air', 'aegean_air', 'flyone'],
     providerSettings: {
       wizz_air: {
