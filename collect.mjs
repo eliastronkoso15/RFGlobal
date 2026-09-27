@@ -15,7 +15,7 @@
  *   node collect.mjs --type holiday --landing skg             # holiday for specific landing
  *
  * This script is also called by the scheduler inside index.mjs.
- * You can wire it into system cron or any scheduler (e.g. GitHub Actions).
+ * You can wire it into system cron or any scheduler.
  *
  * Example crontab entries:
  *   0 9  * * * cd /app && node backend/collect.mjs --schedule morning            >> /var/log/collect.log 2>&1
@@ -35,8 +35,8 @@ import { notify, msgCompleted, msgFailed } from './lib/telegram.mjs';
 // failure). Set by the GHA collector workflows (Aegean, easyJet): visibility
 // there comes from the 09:45 daily summary (freshness ❌ on a missed run) and
 // the workflow-level failure notification step, so per-(landing × type)
-// messages are pure noise — 6+/day per provider. Lambda collects never sent
-// per-collect messages.
+// messages are pure noise — 6+/day per provider. Server-side collects never
+// sent per-collect messages.
 const PER_COLLECT_NOTIFY = (process.env.COLLECT_NOTIFY ?? 'on') !== 'off';
 
 // ── CLI args ─────────────────────────────────────────────────────────────────
@@ -93,6 +93,7 @@ async function runProvider(provider, landing, scheduleType, collectType = 'onewa
     tripType,
     // Selects the currency-specific price ceiling in saveSnapshot (GBP for stn).
     currency:     landing.providerSettings?.[provider.id]?.currency ?? landing.currency ?? 'EUR',
+    ...(landing.priceCeilings ? { priceCeilings: landing.priceCeilings } : {}),
     recordCount:  0,
     status:       'failed',
   };
@@ -104,9 +105,10 @@ async function runProvider(provider, landing, scheduleType, collectType = 'onewa
       ? await provider.collectWeekend(landing, { snapshotId, scheduleType })
       : await provider.collect(landing, { snapshotId, scheduleType });
 
-    // Note: global price-ceiling filter (€100 oneway / €200 RT) is applied
-    // inside saveSnapshot() — see backend/snapshots/store.mjs. Centralised
-    // there so every caller of saveSnapshot() inherits it.
+    // Note: the price-ceiling filter is applied inside saveSnapshot() —
+    // see snapshots/store.mjs. Centralised there so EVERY caller (this
+    // runner, server endpoints, scheduled jobs, GitHub Actions workflows)
+    // inherits it.
 
     meta.recordCount = fares.length;
     meta.status      = fares.length > 0 ? 'success' : 'partial';
@@ -114,7 +116,7 @@ async function runProvider(provider, landing, scheduleType, collectType = 'onewa
     await saveSnapshot(meta, fares);
 
     // Side-channel: persist the full price calendar the provider saw during
-    // this run (date-search feature). No-op unless provider.lastCalendar set.
+    // this run (project docs). No-op unless provider.lastCalendar set.
     await saveProviderCalendar(provider, landing);
 
     const label      = isWeekend ? 'weekend pairs' : 'fares';

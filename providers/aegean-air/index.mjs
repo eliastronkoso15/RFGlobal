@@ -433,7 +433,7 @@ class AegeanAirProvider extends BaseProvider {
     };
 
     // Side-channel: accumulate the full per-day calendar for date-search
-    // (date-search feature). Single choke point — every collect type calls
+    // (project docs). Single choke point — every collect type calls
     // _fetchMonthPrices, so this covers oneway/weekend/holiday runs alike.
     // The collect runner persists this.lastCalendar after the run.
     this._calRoutes ??= {};

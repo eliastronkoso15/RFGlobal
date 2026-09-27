@@ -614,7 +614,7 @@ class WizzAirProvider extends BaseProvider {
     const { browser, context } = await this._getBrowserContext();
     const allPairs = [];
     // Full daily calendars seen during this run — persisted by the collect
-    // runner via saveProviderCalendar().
+    // runner via saveProviderCalendar() (project docs).
     const calRoutes = {};
 
     try {

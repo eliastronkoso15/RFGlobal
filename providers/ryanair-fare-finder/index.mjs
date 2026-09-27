@@ -578,7 +578,7 @@ export class RyanairFareFinderProvider extends BaseProvider {
 
     console.log(`[RFF] Done — ${allFares.length} total fares from ${fridays.length} Fridays`);
 
-    // Calendar pass for date-search: unlike the Friday
+    // Calendar pass for date-search (project docs): unlike the Friday
     // sampling above, cheapestPerDay returns the full month per route per
     // direction in one plain-HTTPS call. Destinations = whatever this run saw
     // (routes with zero Friday service are invisible here — documented

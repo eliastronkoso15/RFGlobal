@@ -125,8 +125,8 @@ function snapshotFilename(scheduleType, ts) {
 
 /**
  * Global price ceilings — dropped at save time so EVERY caller (collect.mjs
- * runner and any other snapshot writer,
- * GitHub Actions workflows) inherits the cap. Single source of truth.
+ * runner, server endpoints, scheduled jobs, GitHub Actions workflows)
+ * inherits the cap. Single source of truth.
  *
  * Determined by `meta.tripType`:
  *   • one_way:  ≤ €100   (covers UK / W-EU economy headroom)
@@ -136,8 +136,8 @@ function snapshotFilename(scheduleType, ts) {
  * Fares with missing / NaN price pass through (downstream merge handles
  * them). Only fares we KNOW exceed the ceiling are dropped.
  *
- * Rationale: the product surfaces cheap fares first; capping at collect
- * time keeps snapshots small and honest.
+ * Rationale + history in project docs → "Cheap-first by backend
+ * cap + count pagination".
  */
 // Keyed by currency since the stn (London) landing collects in GBP. Caps are
 // compared against the fare's raw numeric price, so each currency needs its
@@ -151,7 +151,10 @@ const PRICE_CEILINGS = {
 
 function applyPriceCeiling(meta, fares) {
   const byCurrency = PRICE_CEILINGS[meta?.currency] ?? PRICE_CEILINGS.EUR;
-  const ceil = byCurrency[meta?.tripType];
+  // Per-landing override (landing.priceCeilings, carried in meta): EVN runs
+  // €150/€250 — 2-4k-km routes make the intra-EU €100 bar unrealistically
+  // strict there (owner decision 2026-09-28; Aegean EVN network min is €141).
+  const ceil = meta?.priceCeilings?.[meta?.tripType] ?? byCurrency[meta?.tripType];
   if (!Number.isFinite(ceil)) return fares;   // unknown tripType — leave as-is
   const kept = fares.filter((f) => {
     const p = Number(f?.price);
