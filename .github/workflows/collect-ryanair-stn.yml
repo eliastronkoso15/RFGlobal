@@ -17,7 +17,7 @@ jobs:
     env:
       AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION:            ${{ secrets.AWS_REGION }}
+      AWS_REGION:            eu-central-1   # not a secret — plain env
       SNAPSHOT_BUCKET:       ${{ secrets.SNAPSHOT_BUCKET }}
       TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
