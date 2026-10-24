@@ -149,6 +149,11 @@ class FlyOneProvider extends BaseProvider {
     this.directOnly = config.defaults?.directOnly ?? true;
   }
 
+  /** Routes to skip for this landing (providerSettings.flyone.skipRoutes). */
+  _skipSet(landing) {
+    return new Set(landing.providerSettings?.[this.id]?.skipRoutes ?? []);
+  }
+
   /** Accumulate per-day price points for the date-search calendar
    *  (calendar/flyone/{landing}/all.json — same pattern as aegean/wizz).
    *  The collect runner persists this.lastCalendar after each run. */
@@ -368,8 +373,9 @@ class FlyOneProvider extends BaseProvider {
       this._calAddOut(byDest);
 
       // For each destination: pick the cheapest fare across all windows
+      const skip = this._skipSet(landing);
       for (const [dest, points] of byDest) {
-        if (!DESTINATIONS_EVN[dest]) continue; // skip unknown / irrelevant
+        if (!DESTINATIONS_EVN[dest] || skip.has(dest)) continue; // unknown / skipRoutes
         if (points.length === 0) continue;
 
         // Best = cheapest price overall
@@ -418,8 +424,9 @@ class FlyOneProvider extends BaseProvider {
       // 2. For each destination that has outbound Friday fares,
       //    collect return fares (dest → origin direction)
       const destWithFridays = [];
+      const skip = this._skipSet(landing);
       for (const [dest, points] of outboundByDest) {
-        if (!DESTINATIONS_EVN[dest]) continue;
+        if (!DESTINATIONS_EVN[dest] || skip.has(dest)) continue;
         const fridays = points.filter((p) => dayOfWeek(p.depDate) === 5);
         if (fridays.length > 0) destWithFridays.push(dest);
       }
@@ -508,7 +515,8 @@ class FlyOneProvider extends BaseProvider {
       this._calAddOut(outboundByDest);
 
       // Collect return fares for all known destinations
-      const knownDests = [...outboundByDest.keys()].filter((d) => DESTINATIONS_EVN[d]);
+      const skip = this._skipSet(landing);
+      const knownDests = [...outboundByDest.keys()].filter((d) => DESTINATIONS_EVN[d] && !skip.has(d));
       console.log(`  [flyone] Fetching return fares for ${knownDests.length} destinations`);
 
       const returnByDest = new Map();
