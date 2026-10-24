@@ -41,7 +41,9 @@ jobs:
   collect:
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 40 (was 25): weekend job normally runs 18-21 min — the 2026-10-05 run
+    # was killed at 25:16 and EVN weekend sat stale ~71h. Minutes are free here.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:

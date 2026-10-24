@@ -1,6 +1,6 @@
 name: Collect Aegean Prices (EVN)
 
-# Aegean from Yerevan: oneway + holiday daily; weekend only Tue/Sat —
+# Aegean from Yerevan: ONEWAY ONLY (see plan job) —
 # EVN weekend historically yields ~0 fares (not a Sat-Tue leisure market).
 # NOTE: most Aegean EVN oneway fares exceed the €100 collect-time price
 # ceiling, so snapshots may hold few/zero fares while the cheapest-per-day
@@ -21,14 +21,14 @@ jobs:
       - id: set
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo 'types=["oneway","weekend","holiday"]' >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          DOW=$(date -u +%u)
-          case "$DOW" in
-            2|6) echo 'types=["oneway","weekend","holiday"]' >> "$GITHUB_OUTPUT" ;;
-            *)   echo 'types=["oneway","holiday"]' >> "$GITHUB_OUTPUT" ;;
-          esac
+          # ONEWAY-ONLY since 2026-10-24 (owner decision): weekend/holiday
+          # collected daily for a month and the €250 ceiling dropped 100% of
+          # fares every single run — Aegean ex-EVN is structurally pricier.
+          # The oneway type yields real EVN→ATH fares and the cheapest-per-day
+          # calendar (written uncapped) keeps feeding date-search for all
+          # routes. To revive wk/hol: restore the DOW matrix here AND the
+          # summary rows in the private repo's backend/lib/summary.mjs.
+          echo 'types=["oneway"]' >> "$GITHUB_OUTPUT"
 
   collect:
     needs: plan
