@@ -1,8 +1,18 @@
 /**
  * airports.mjs — IATA → { city, country, cc (ISO 3166-1 alpha-2) }
- * Используется как fallback для не-Ryanair рейсов.
- * Ryanair рейсы получают данные прямо из API.
+ * Used to fill destinationCity/Country/cc in API responses.
+ *
+ * Coverage strategy:
+ *   1. AIRPORTS (this file) — hand-curated ~180 destinations we route to.
+ *      Wins on lookup. Edit here for display-name fixes.
+ *   2. IATA_FALLBACK (data/iata-fallback.mjs) — ~6000 airports from
+ *      OpenFlights, auto-generated. Any IATA a provider surfaces without
+ *      us knowing about it still gets a proper city/country/flag.
+ *   3. Last resort — return the IATA itself as the "city" so the frontend
+ *      never renders an empty string.
  */
+import { IATA_FALLBACK } from './data/iata-fallback.mjs';
+
 export const AIRPORTS = {
   // ── Greece ──────────────────────────────────────────────────────────────────
   ATH: { city: 'Athens',          country: 'Greece',          cc: 'GR' },
@@ -96,6 +106,10 @@ export const AIRPORTS = {
   // ── Ireland ─────────────────────────────────────────────────────────────────
   DUB: { city: 'Dublin',          country: 'Ireland',         cc: 'IE' },
   SNN: { city: 'Shannon',         country: 'Ireland',         cc: 'IE' },
+  ORK: { city: 'Cork',            country: 'Ireland',         cc: 'IE' },
+  // Ireland West Airport — official name "Ireland West Knock". Travellers
+  // call it Knock; OpenFlights labels it "Connaught" (the region). Override.
+  NOC: { city: 'Knock',           country: 'Ireland',         cc: 'IE' },
   // ── Israel ──────────────────────────────────────────────────────────────────
   TLV: { city: 'Tel Aviv',        country: 'Israel',          cc: 'IL' },
   // ── Italy ───────────────────────────────────────────────────────────────────
@@ -247,7 +261,12 @@ export function flagEmoji(cc) {
  * Fallback: возвращает пустые строки.
  */
 export function airportInfo(iata) {
-  const a = AIRPORTS[iata?.toUpperCase()];
-  if (!a) return { city: '', country: '', cc: '', flag: '' };
+  const code = iata?.toUpperCase();
+  if (!code) return { city: '', country: '', cc: '', flag: '' };
+  // AIRPORTS wins (curated names like "Knock" beat OpenFlights' technical
+  // "Connaught"); IATA_FALLBACK closes the long tail; if both miss we hand
+  // the frontend the IATA itself so it never renders a blank city.
+  const a = AIRPORTS[code] ?? IATA_FALLBACK[code];
+  if (!a) return { city: code, country: '', cc: '', flag: '' };
   return { city: a.city, country: a.country, cc: (a.cc || '').toLowerCase(), flag: flagEmoji(a.cc) };
 }
