@@ -6,9 +6,14 @@ name: Collect Aegean Prices (EVN)
 # ceiling, so snapshots may hold few/zero fares while the cheapest-per-day
 # calendar (date-search hints) still fills — that alone justifies the run.
 
+# Cron is set ~5.7 h EARLIER than the run is wanted: measured over 20 runs (Oct 2026),
+# GitHub starts these scheduled runs 4.2–9.5 h late (median 5.7 h) at any minute, so
+# '31 4 * * *' lands around ~10:15 UTC, close to the AWS collectors (09:00 UTC).
+# The API-side freshness window for GHA collectors (30h) absorbs the spread.
+
 on:
   schedule:
-    - cron: '31 7 * * *'
+    - cron: '31 4 * * *'
   workflow_dispatch:
 
 jobs:

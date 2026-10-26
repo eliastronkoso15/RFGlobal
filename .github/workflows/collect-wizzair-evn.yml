@@ -8,13 +8,14 @@ name: Collect Wizz Air Prices (EVN)
 # ROLLOUT PHASE 2: types pinned to ["oneway"] until the daily runs prove
 # stable (see the commented block in the plan job for the phase-3 logic).
 #
-# Cron is intentionally odd-minute/off-peak: GitHub cron dispatch drifts by
-# hours at popular times. The API-side freshness window for GHA collectors
-# is 30h, so drift is absorbed.
+# Cron is set ~5.7 h EARLIER than the run is wanted: measured over 20 runs (Oct 2026),
+# GitHub starts these scheduled runs 4.2–9.5 h late (median 5.7 h) at any minute, so
+# '23 3 * * *' lands around ~09:05 UTC, close to the AWS collectors (09:00 UTC).
+# The API-side freshness window for GHA collectors (30h) absorbs the spread.
 
 on:
   schedule:
-    - cron: '23 6 * * *'
+    - cron: '23 3 * * *'
   workflow_dispatch:
 
 jobs:

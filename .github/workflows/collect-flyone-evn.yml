@@ -4,9 +4,14 @@ name: Collect FlyOne Prices (EVN)
 # Bearer token from bookings.flyone.eu/FareView, then plain fetches. All 3
 # trip types daily as a parallel matrix (~3-9 min each, free public minutes).
 
+# Cron is set ~5.7 h EARLIER than the run is wanted: measured over 20 runs (Oct 2026),
+# GitHub starts these scheduled runs 4.2–9.5 h late (median 5.7 h) at any minute, so
+# '11 4 * * *' lands around ~09:55 UTC, close to the AWS collectors (09:00 UTC).
+# The API-side freshness window for GHA collectors (30h) absorbs the spread.
+
 on:
   schedule:
-    - cron: '11 7 * * *'
+    - cron: '11 4 * * *'
   workflow_dispatch:
 
 jobs:
