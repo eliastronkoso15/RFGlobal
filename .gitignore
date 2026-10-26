@@ -1,3 +1,6 @@
 node_modules/
 .env
-data/
+# local snapshot data from dev runs is ignored; code modules in data/ are tracked
+# (data/iata-fallback.mjs was silently dropped by a plain "data/" — collectors broke 2026-10-25)
+data/*
+!data/*.mjs
