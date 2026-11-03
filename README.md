@@ -11,11 +11,13 @@ snapshots to local disk or any S3 bucket.
 |---|---|---|
 | `wizz_air` | Wizz Air farechart (map + farechart endpoints, read via response interception) | Playwright Chromium |
 | `ryanair_fare_finder` | Ryanair fare-finder API (`services-api.ryanair.com/farfnd/v4`) | plain HTTPS |
+| `sky_express` | SKY express booking engine lowest-fare calendar (Sabre ezyCommerce `Availability/SearchLowestFare`) | plain HTTPS |
 
 ## Landings
 
 A *landing* is an origin airport (see `config/landings.mjs`). Currently:
-`evn` (Yerevan, EUR) and `stn` (London Stansted, GBP). Invariants:
+`evn` (Yerevan, EUR), `stn` (London Stansted, GBP), `skg` (Thessaloniki, EUR) and
+`ath` (Athens, EUR). Invariants:
 `landingSlug === lowercase(homeAirportIata)`; one landing = one currency.
 
 ## Quickstart (local, zero config)

@@ -55,4 +55,20 @@ export const PROVIDER_CONFIGS = {
       monthsAhead: 2,
     },
   },
+
+  sky_express: {
+    id: 'sky_express',
+    name: 'SKY express Lowest Fare',
+    type: 'airline_direct',
+    priority: 11,
+    enabled: true,
+    defaults: {
+      currency: 'EUR',
+      monthsAhead: 2,
+      // One SearchLowestFare call per destination x month, ~13-25 s each on
+      // their side, so a few run in parallel.
+      concurrency: 4,
+      timeoutMs: 90000,
+    },
+  },
 };

@@ -9,6 +9,7 @@ import { ryanairFareFinderProvider } from './ryanair-fare-finder/index.mjs';
 import { wizzAirProvider }           from './wizz-air/index.mjs';
 import { aegeanAirProvider }         from './aegean-air/index.mjs';
 import { flyOneProvider }            from './flyone/index.mjs';
+import { skyExpressProvider }        from './sky-express/index.mjs';
 
 /** All providers in registration order. */
 export const REGISTRY = [
@@ -16,6 +17,7 @@ export const REGISTRY = [
   wizzAirProvider,
   aegeanAirProvider,
   flyOneProvider,
+  skyExpressProvider,
 ];
 
 /** Get a provider by id, or null. */

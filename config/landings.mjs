@@ -40,19 +40,23 @@ export const LANDINGS = [
     },
   },
 
-  // Greece — Ryanair only (2026-11-03). The other Greek providers (Wizz, Aegean,
-  // Google Flights) are collected elsewhere; this repo only adds Ryanair at
-  // 6 months ahead. EUR defaults for price ceilings.
+  // Greece — Ryanair (2026-11-03) + SKY express (2026-11-03), both 6 months
+  // ahead over plain HTTPS. The other Greek providers (Wizz, Aegean, Google
+  // Flights) are collected elsewhere. EUR defaults for price ceilings.
   {
     landingSlug: 'skg',
     homeAirportIata: 'SKG',
     homeCity: 'Thessaloniki',
     currency: 'EUR',
-    enabledProviders: ['ryanair_fare_finder'],
+    enabledProviders: ['ryanair_fare_finder', 'sky_express'],
     providerSettings: {
       ryanair_fare_finder: {
         currency: 'EUR',
         maxResultsPerDate: 10,
+        monthsAhead: 5,
+      },
+      sky_express: {
+        currency: 'EUR',
         monthsAhead: 5,
       },
     },
@@ -63,11 +67,15 @@ export const LANDINGS = [
     homeAirportIata: 'ATH',
     homeCity: 'Athens',
     currency: 'EUR',
-    enabledProviders: ['ryanair_fare_finder'],
+    enabledProviders: ['ryanair_fare_finder', 'sky_express'],
     providerSettings: {
       ryanair_fare_finder: {
         currency: 'EUR',
         maxResultsPerDate: 10,
+        monthsAhead: 5,
+      },
+      sky_express: {
+        currency: 'EUR',
         monthsAhead: 5,
       },
     },

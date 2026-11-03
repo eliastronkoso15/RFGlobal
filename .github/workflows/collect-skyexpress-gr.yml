@@ -1,0 +1,73 @@
+name: Collect SKY express Prices (SKG, ATH)
+
+# Thessaloniki + Athens, SKY express (GQ) direct routes, 6 months ahead
+# (config/landings.mjs). Plain HTTPS against the airline's booking API, no
+# browser: one SearchLowestFare call per destination x month (both legs),
+# 4 in parallel. SKG 12 routes ~5 min; ATH 54 routes ~25-30 min. One job per
+# landing, all 3 trip types from a single fetch (--type all).
+#
+# Once a day. The cron is set ~5.7 h EARLIER than the run is wanted: GitHub
+# starts scheduled runs 4.2-9.5 h late (median 5.7 h, Oct 2026), so '41 3'
+# lands around ~09:20 UTC.
+
+on:
+  schedule:
+    - cron: '41 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: collect-skyexpress-gr
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        landing: [skg, ath]
+    env:
+      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION:            eu-central-1   # not a secret — plain env
+      SNAPSHOT_BUCKET:       ${{ secrets.SNAPSHOT_BUCKET }}
+      TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+      COLLECT_NOTIFY:        'off'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Collect all trip types (${{ matrix.landing }})
+        run: node collect.mjs --provider sky_express --landing ${{ matrix.landing }} --schedule morning --type all
+
+      - name: Notify Telegram on workflow failure
+        if: failure()
+        run: |
+          [ -z "$TELEGRAM_BOT_TOKEN" ] && exit 0
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"⚠️ <b>SKY express ${{ matrix.landing }} workflow failed</b>\n<a href=\\\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\\\">View run</a>\",\"parse_mode\":\"HTML\",\"disable_web_page_preview\":true}"
+
+  purge:
+    name: Purge API cache
+    needs: collect
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      API_URL:            ${{ secrets.API_URL }}
+      CACHE_PURGE_SECRET: ${{ secrets.CACHE_PURGE_SECRET }}
+    steps:
+      - name: POST /api/purge-cache
+        run: |
+          [ -z "$API_URL" ] && echo "API_URL not set — skipping purge" && exit 0
+          curl -s -X POST "$API_URL/api/purge-cache" \
+            -H "Authorization: Bearer $CACHE_PURGE_SECRET" \
+            | grep -q '"ok":true' && echo "✅ Cache purged" || echo "⚠️ Purge failed (non-critical)"
