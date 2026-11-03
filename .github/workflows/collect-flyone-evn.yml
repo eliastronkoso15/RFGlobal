@@ -16,7 +16,11 @@ on:
 
 jobs:
   collect:
-    runs-on: ubuntu-latest
+    # ubuntu-24.04 PINNED 2026-11-03: GitHub is rolling ubuntu-latest to 26.04
+    # and Playwright errors 'does not support chromium on ubuntu26.04-x64'
+    # (took the private repo's Aegean down for 7 days). Unpin only together
+    # with a deliberate Playwright upgrade.
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -55,7 +59,11 @@ jobs:
     name: Purge API cache
     needs: collect
     if: always()
-    runs-on: ubuntu-latest
+    # ubuntu-24.04 PINNED 2026-11-03: GitHub is rolling ubuntu-latest to 26.04
+    # and Playwright errors 'does not support chromium on ubuntu26.04-x64'
+    # (took the private repo's Aegean down for 7 days). Unpin only together
+    # with a deliberate Playwright upgrade.
+    runs-on: ubuntu-24.04
     env:
       API_URL:            ${{ secrets.API_URL }}
       CACHE_PURGE_SECRET: ${{ secrets.CACHE_PURGE_SECRET }}
