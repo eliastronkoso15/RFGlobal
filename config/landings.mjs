@@ -15,7 +15,9 @@ export const LANDINGS = [
     currency: 'EUR',
     // EVN-specific ceilings (EUR defaults are 100/200/200): 2-4k-km market,
     // "cheap" is structurally pricier here.
-    priceCeilings: { one_way: 150, weekend: 250, holiday: 250 },
+    // RT ceilings 250→350 (2026-11-03, owner): at 250 the weekend tab zeroed
+    // out — Aegean wk/hol lost 100% of fares for a month, FlyOne weekend died.
+    priceCeilings: { one_way: 150, weekend: 350, holiday: 350 },
     enabledProviders: ['wizz_air', 'aegean_air', 'flyone'],
     providerSettings: {
       wizz_air: {
