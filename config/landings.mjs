@@ -50,7 +50,9 @@ export const LANDINGS = [
       ryanair_fare_finder: {
         currency: 'GBP',
         maxResultsPerDate: 10,
-        monthsAhead: 2,
+        // Current month + 5 = 6 months. Ryanair sells ~8 months ahead (probed
+        // 2026-11-03: STN Feb-Jun 2027 all 120-150 fares); plain HTTPS, ~5 min/run.
+        monthsAhead: 5,
       },
     },
   },
