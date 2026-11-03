@@ -40,6 +40,39 @@ export const LANDINGS = [
     },
   },
 
+  // Greece — Ryanair only (2026-11-03). The other Greek providers (Wizz, Aegean,
+  // Google Flights) are collected elsewhere; this repo only adds Ryanair at
+  // 6 months ahead. EUR defaults for price ceilings.
+  {
+    landingSlug: 'skg',
+    homeAirportIata: 'SKG',
+    homeCity: 'Thessaloniki',
+    currency: 'EUR',
+    enabledProviders: ['ryanair_fare_finder'],
+    providerSettings: {
+      ryanair_fare_finder: {
+        currency: 'EUR',
+        maxResultsPerDate: 10,
+        monthsAhead: 5,
+      },
+    },
+  },
+
+  {
+    landingSlug: 'ath',
+    homeAirportIata: 'ATH',
+    homeCity: 'Athens',
+    currency: 'EUR',
+    enabledProviders: ['ryanair_fare_finder'],
+    providerSettings: {
+      ryanair_fare_finder: {
+        currency: 'EUR',
+        maxResultsPerDate: 10,
+        monthsAhead: 5,
+      },
+    },
+  },
+
   {
     landingSlug: 'stn',
     homeAirportIata: 'STN',
