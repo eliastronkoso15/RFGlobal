@@ -56,14 +56,5 @@ jobs:
     name: Purge API cache
     needs: collect
     if: always()
-    runs-on: ubuntu-latest
-    env:
-      API_URL:            ${{ secrets.API_URL }}
-      CACHE_PURGE_SECRET: ${{ secrets.CACHE_PURGE_SECRET }}
-    steps:
-      - name: POST /api/purge-cache
-        run: |
-          [ -z "$API_URL" ] && echo "API_URL not set — skipping purge" && exit 0
-          curl -s -X POST "$API_URL/api/purge-cache" \
-            -H "Authorization: Bearer $CACHE_PURGE_SECRET" \
-            | grep -q '"ok":true' && echo "✅ Cache purged" || echo "⚠️ Purge failed (non-critical)"
+    uses: ./.github/workflows/purge-cache.yml
+    secrets: inherit

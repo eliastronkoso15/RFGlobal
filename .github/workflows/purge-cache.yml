@@ -1,0 +1,38 @@
+name: Purge API cache
+
+# Drops the API's in-memory snapshot cache so the next request re-reads S3.
+# Every collector workflow calls this after its collect job (workflow_call);
+# it can also be run by hand to test the two secrets without collecting.
+# Non-fatal by design: the API cache has a 30-minute TTL, so a missed purge
+# only delays fresh data by up to 30 min. A failure leaves a warning on the
+# run page that says which secret to check (no URL or body is printed —
+# this repo's logs are public).
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  purge:
+    name: POST /api/purge-cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      API_URL:            ${{ secrets.API_URL }}
+      CACHE_PURGE_SECRET: ${{ secrets.CACHE_PURGE_SECRET }}
+    steps:
+      - name: POST /api/purge-cache
+        shell: bash
+        run: |
+          if [ -z "$API_URL" ];            then echo "::warning::API_URL secret is not set — purge skipped"; exit 0; fi
+          if [ -z "$CACHE_PURGE_SECRET" ]; then echo "::warning::CACHE_PURGE_SECRET secret is not set — purge skipped"; exit 0; fi
+          CODE=$(curl -s -o resp.json -w '%{http_code}' --max-time 30 -X POST "${API_URL%/}/api/purge-cache" \
+            -H "Authorization: Bearer $CACHE_PURGE_SECRET") || true
+          if [ "$CODE" = "200" ] && grep -q '"ok":true' resp.json; then echo "✅ Cache purged"; exit 0; fi
+          case "$CODE" in
+            401)     WHY="401 unauthorized: CACHE_PURGE_SECRET does not match the API's" ;;
+            403|404) WHY="$CODE: API_URL does not point at the API (expected the API base URL, https, no path)" ;;
+            000)     WHY="no response: API_URL is not a reachable https URL" ;;
+            *)       WHY="HTTP $CODE" ;;
+          esac
+          echo "::warning::Purge failed (non-critical, the 30-min cache TTL is the backstop) — $WHY"

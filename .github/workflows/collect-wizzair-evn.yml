@@ -104,18 +104,5 @@ jobs:
     name: Purge API cache
     needs: collect
     if: always()
-    # ubuntu-24.04 PINNED 2026-11-03: GitHub is rolling ubuntu-latest to 26.04
-    # and Playwright errors 'does not support chromium on ubuntu26.04-x64'
-    # (took the private repo's Aegean down for 7 days). Unpin only together
-    # with a deliberate Playwright upgrade.
-    runs-on: ubuntu-24.04
-    env:
-      API_URL:            ${{ secrets.API_URL }}
-      CACHE_PURGE_SECRET: ${{ secrets.CACHE_PURGE_SECRET }}
-    steps:
-      - name: POST /api/purge-cache
-        run: |
-          [ -z "$API_URL" ] && echo "API_URL not set — skipping purge" && exit 0
-          curl -s -X POST "$API_URL/api/purge-cache" \
-            -H "Authorization: Bearer $CACHE_PURGE_SECRET" \
-            | grep -q '"ok":true' && echo "✅ Cache purged" || echo "⚠️ Purge failed (non-critical)"
+    uses: ./.github/workflows/purge-cache.yml
+    secrets: inherit
