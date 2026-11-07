@@ -12,6 +12,8 @@ snapshots to local disk or any S3 bucket.
 | `wizz_air` | Wizz Air farechart (map + farechart endpoints, read via response interception) | Playwright Chromium |
 | `ryanair_fare_finder` | Ryanair fare-finder API (`services-api.ryanair.com/farfnd/v4`) | plain HTTPS |
 | `sky_express` | SKY express booking engine lowest-fare calendar (Sabre ezyCommerce `Availability/SearchLowestFare`) | plain HTTPS |
+| `aegean_air` | Aegean Airlines low-fare calendar (`RouteLowFares`: per-day prices for both legs, one call per destination × month) | Playwright Chromium |
+| `flyone` | FlyOne fare calendar (the booking site's own FareView API) | Playwright Chromium |
 
 ## Landings
 
@@ -24,7 +26,7 @@ A *landing* is an origin airport (see `config/landings.mjs`). Currently:
 
 ```bash
 npm ci
-npx playwright install chromium        # only needed for wizz_air
+npx playwright install chromium        # only needed for wizz_air, aegean_air, flyone
 DATA_ROOT=./data/price-snapshots node collect.mjs \
   --provider ryanair_fare_finder --landing stn --type oneway
 ```
