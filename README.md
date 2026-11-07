@@ -48,6 +48,8 @@ drop fares above the "cheap flights" threshold at collect time.
 GitHub Actions workflows in `.github/workflows/` run the collectors daily
 (see each file's header for cadence and phasing). `keep-alive.yml` prevents
 GitHub's 60-day cron auto-disable.
+Collectors only write snapshots; nothing calls the consuming API afterwards —
+it picks new snapshots up on its own cache expiry.
 
 ## Responsible use
 

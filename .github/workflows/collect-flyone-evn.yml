@@ -54,10 +54,3 @@ jobs:
           if [ "$HOUR" -lt "14" ]; then echo "tag=morning" >> "$GITHUB_OUTPUT"; else echo "tag=evening" >> "$GITHUB_OUTPUT"; fi
       - name: Collect ${{ matrix.type }} fares (EVN)
         run: node collect.mjs --provider flyone --landing evn --schedule ${{ steps.schedule.outputs.tag }} --type ${{ matrix.type }}
-
-  purge:
-    name: Purge API cache
-    needs: collect
-    if: always()
-    uses: ./.github/workflows/purge-cache.yml
-    secrets: inherit
