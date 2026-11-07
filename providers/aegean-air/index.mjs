@@ -21,7 +21,12 @@
  *           Date format: "\"/Date(<epochMs>)/\""  (yes, double-quoted)
  *
  * One call to (B) per destination × month covers oneway, weekend and holiday
- * modes, because it includes BOTH outbound and return daily prices.
+ * modes, because it includes BOTH outbound and return daily prices. So the
+ * grid (destinations × months + 1 trailing month for return legs) is fetched
+ * ONCE per process in one browser session and shared by the three trip types
+ * (`collect.mjs --type all`). Months per landing:
+ * providerSettings.aegean_air.monthsAhead (SKG/ATH 5 = 6 months; the API
+ * prices at least 10 months ahead — probe 2026-11-06).
  *
  * Booking deeplink:
  *   https://en.aegeanair.com/flight-deals/low-fare-calendar/
@@ -198,14 +203,16 @@ function getDestinations(originIata) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Current month + `monthsAhead`, plus one trailing month (return legs only). */
 function monthsRange(monthsAhead = 2) {
   const months = [];
   const now = new Date();
-  for (let i = 0; i <= monthsAhead; i++) {
+  for (let i = 0; i <= monthsAhead + 1; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
     months.push({
       key:  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
       api:  `${d.getFullYear()}-${d.getMonth() + 1}`, // Aegean wants no zero-pad
+      returnsOnly: i === monthsAhead + 1,
     });
   }
   return months;
@@ -239,6 +246,7 @@ class AegeanAirProvider extends BaseProvider {
     this.currency    = config.defaults?.currency    ?? 'EUR';
     this.monthsAhead = config.defaults?.monthsAhead ?? 2;
     this.headless    = config.defaults?.headless    ?? true;
+    this._grids      = new Map(); // origin → Promise<grid>, one fetch per process
   }
 
   /** Launch Chromium with bot-resistant fingerprint. */
@@ -379,9 +387,10 @@ class AegeanAirProvider extends BaseProvider {
   }
 
   /**
-   * Fetch per-day prices for a specific route × month.
-   * Runs inside the browser, so cookies/UA/fingerprint match the tab.
-   * Returns { outbound: Map<date,price>, inbound: Map<date,price> }.
+   * Fetch per-day prices for one route × month (endpoint B). Runs inside the
+   * browser, so cookies/UA/fingerprint match the tab. One retry after a
+   * network error, 5xx or 429; a 4xx is not retried (a refused session stays
+   * refused). Returns { outbound: Map<date,…>, inbound: Map<date,…>, error }.
    */
   async _fetchMonthPrices(page, origin, dest, yearMonth /* e.g. "2026-4" */) {
     const url = `${BASE_URL}/en/sys/lowfares/RouteLowFares/`
@@ -394,23 +403,30 @@ class AegeanAirProvider extends BaseProvider {
               + `&SelectedReturnDate=`
               + `&Type=Fares`;
 
-    const raw = await page.evaluate(async (fetchUrl) => {
-      try {
-        const res = await fetch(fetchUrl, {
-          method:  'GET',
-          headers: { 'accept': 'application/json', 'x-requested-with': 'XMLHttpRequest' },
-          credentials: 'include',
-        });
-        if (!res.ok) return { _error: `HTTP ${res.status}` };
-        return await res.json();
-      } catch (e) {
-        return { _error: e.message };
-      }
-    }, url);
+    let raw;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      raw = await page.evaluate(async (fetchUrl) => {
+        try {
+          const res = await fetch(fetchUrl, {
+            method:  'GET',
+            headers: { 'accept': 'application/json', 'x-requested-with': 'XMLHttpRequest' },
+            credentials: 'include',
+          });
+          if (!res.ok) return { _error: `HTTP ${res.status}`, _status: res.status };
+          return await res.json();
+        } catch (e) {
+          return { _error: e.message };
+        }
+      }, url);
+      const status = raw?._status ?? 0;
+      const retryable = raw?._error && !(status >= 400 && status < 500 && status !== 429);
+      if (!retryable || attempt === 2) break;
+      await sleep(2000);
+    }
 
     if (raw?._error) {
       console.warn(`  [aegean] ${origin}→${dest} ${yearMonth}: ${raw._error}`);
-      return { outbound: new Map(), inbound: new Map() };
+      return { outbound: new Map(), inbound: new Map(), error: raw._error };
     }
 
     const toMap = (arr) => {
@@ -427,54 +443,110 @@ class AegeanAirProvider extends BaseProvider {
       return m;
     };
 
-    const result = {
-      outbound: toMap(raw.Outbound),
-      inbound:  toMap(raw.Inbound),
-    };
-
-    // Side-channel: accumulate the full per-day calendar for date-search
-    // (project docs). Single choke point — every collect type calls
-    // _fetchMonthPrices, so this covers oneway/weekend/holiday runs alike.
-    // The collect runner persists this.lastCalendar after the run.
-    this._calRoutes ??= {};
-    for (const { date, price } of result.outbound.values()) addCalendarPoint(this._calRoutes, dest, 'out', date, price, 'A3');
-    for (const { date, price } of result.inbound.values())  addCalendarPoint(this._calRoutes, dest, 'in',  date, price, 'A3');
-    this.lastCalendar = { scope: 'all', routes: this._calRoutes };
-
-    return result;
+    return { outbound: toMap(raw.Outbound), inbound: toMap(raw.Inbound), error: null };
   }
 
-  /** Iterate destinations (curated list for this origin) × months and fetch once per cell. */
-  async _collectAllCells(page, origin, months) {
+  /**
+   * The price grid of a landing, fetched ONCE per process and shared by
+   * collect / collectWeekend / collectHoliday (`collect.mjs --type all`):
+   * one browser session instead of three identical ones. A failed grid
+   * stays cached as a rejection, so the other trip types fail fast instead
+   * of opening new sessions against a site that has just refused us.
+   */
+  _grid(landing) {
+    const origin = landing.homeAirportIata;
+    if (!this._grids.has(origin)) this._grids.set(origin, this._fetchGrid(landing));
+    return this._grids.get(origin);
+  }
+
+  /**
+   * destinations × (visible months + 1 trailing month), one session. The
+   * trailing month only feeds the return legs of the last visible month
+   * (weekend Fri → Sun/Mon, holiday up to +15 nights).
+   * Months come from the landing's providerSettings.aegean_air.monthsAhead.
+   */
+  async _fetchGrid(landing) {
+    const origin       = landing.homeAirportIata;
+    const monthsAhead  = landing.providerSettings?.[this.id]?.monthsAhead ?? this.monthsAhead;
+    const allMonths    = monthsRange(monthsAhead);
     const destinations = Object.keys(getDestinations(origin));
-    console.log(`  [aegean] ${origin}: ${destinations.length} destinations × ${months.length} months`);
+    if (!destinations.length) throw new Error(`no Aegean destinations configured for ${origin}`);
 
+    console.log(`  [aegean] ${origin}: ${destinations.length} destinations × ${allMonths.length} months `
+              + `(${allMonths[0].key} … ${allMonths[allMonths.length - 1].key}, the last one for returns only)`);
+
+    const t0 = Date.now();
     /** @type {Map<string, Map<string, {outbound:Map, inbound:Map}>>} dest → month → prices */
-    const grid = new Map();
+    const cells     = new Map();
+    const calRoutes = {};
+    let calls = 0, failed = 0;
 
-    for (let i = 0; i < destinations.length; i++) {
-      const dest = destinations[i];
-      if (i > 0) await sleep(200); // throttle: ~5 req/s
+    const { browser, context } = await this._getBrowserContext();
+    try {
+      const page = await this._establishSession(context);
 
-      const byMonth = new Map();
-      grid.set(dest, byMonth);
+      for (let i = 0; i < destinations.length; i++) {
+        const dest = destinations[i];
+        if (i > 0) await sleep(200); // throttle: ~5 req/s
 
-      for (const month of months) {
-        try {
-          const prices = await this._fetchMonthPrices(page, origin, dest, month.api);
-          if (prices.outbound.size > 0 || prices.inbound.size > 0) {
-            byMonth.set(month.key, prices);
-            console.log(`  [aegean] ${origin}→${dest} ${month.key}: ${prices.outbound.size} out, ${prices.inbound.size} in`);
-          } else {
-            console.log(`  [aegean] ${origin}→${dest} ${month.key}: no flights`);
+        const byMonth = new Map();
+        cells.set(dest, byMonth);
+
+        for (const month of allMonths) {
+          calls++;
+          try {
+            const prices = await this._fetchMonthPrices(page, origin, dest, month.api);
+            if (prices.error) {
+              failed++;
+            } else if (prices.outbound.size > 0 || prices.inbound.size > 0) {
+              byMonth.set(month.key, prices);
+              // Full per-day calendar for date-search (project docs),
+              // persisted by the collect runner from this.lastCalendar.
+              for (const { date, price } of prices.outbound.values()) addCalendarPoint(calRoutes, dest, 'out', date, price, 'A3');
+              for (const { date, price } of prices.inbound.values())  addCalendarPoint(calRoutes, dest, 'in',  date, price, 'A3');
+              console.log(`  [aegean] ${origin}→${dest} ${month.key}: ${prices.outbound.size} out, ${prices.inbound.size} in`);
+            } else {
+              console.log(`  [aegean] ${origin}→${dest} ${month.key}: no flights`);
+            }
+          } catch (err) {
+            failed++;
+            console.error(`  [aegean] ${origin}→${dest} ${month.key}: ${err.message}`);
           }
           await sleep(100); // gap between months of same route
-        } catch (err) {
-          console.error(`  [aegean] ${origin}→${dest} ${month.key}: ${err.message}`);
         }
       }
+
+      await page.close();
+    } finally {
+      await browser.close();
     }
+
+    console.log(`  [aegean] ${origin}: grid done in ${Math.round((Date.now() - t0) / 1000)}s, ${failed}/${calls} calls failed`);
+
+    // More than half failed = the session was refused or the API changed.
+    // Throw: collect.mjs then marks all three snapshots failed and keeps the
+    // previous latest.json, instead of saving a near-empty "partial" over it.
+    if (failed > calls / 2) {
+      throw new Error(`Aegean grid ${origin}: ${failed}/${calls} RouteLowFares calls failed`);
+    }
+
+    return { months: allMonths.filter((m) => !m.returnsOnly), allMonths, cells, calRoutes };
+  }
+
+  /** Grid for this landing + publish its calendar for the collect runner. */
+  async _prepare(landing) {
+    const grid = await this._grid(landing);
+    this.lastCalendar = { scope: 'all', routes: grid.calRoutes };
     return grid;
+  }
+
+  /** Return-leg prices: inbound of this month + the next one (the trailing month included). */
+  static _returnPrices(byMonth, allMonths, monthKey) {
+    const prices = new Map(byMonth.get(monthKey)?.inbound ?? []);
+    const next = allMonths[allMonths.findIndex((m) => m.key === monthKey) + 1];
+    const nextCell = next ? byMonth.get(next.key) : null;
+    if (nextCell) for (const [d, v] of nextCell.inbound) prices.set(d, v);
+    return prices;
   }
 
   _normalizeFare(base, extras) {
@@ -503,46 +575,37 @@ class AegeanAirProvider extends BaseProvider {
   async collect(landing, options = {}) {
     const { snapshotId = 'manual' } = options;
     const origin = landing.homeAirportIata;
-    const months = monthsRange(this.monthsAhead);
     const collectedAt = new Date().toISOString();
 
-    console.log(`\n[AegeanAirProvider] collect() — origin: ${origin}, months: ${months.map(m => m.key).join(', ')}`);
-
-    const { browser, context } = await this._getBrowserContext();
+    console.log(`\n[AegeanAirProvider] collect() — origin: ${origin}`);
+    const { months, cells } = await this._prepare(landing);
     const fares = [];
 
-    try {
-      const page = await this._establishSession(context);
-      const grid = await this._collectAllCells(page, origin, months);
-
-      for (const [dest, byMonth] of grid) {
-        for (const [monthKey, { outbound }] of byMonth) {
-          // Pick cheapest outbound day in the month
-          let best = null;
-          for (const p of outbound.values()) {
-            if (!best || p.price < best.price) best = p;
-          }
-          if (!best || best.price > 300) continue;
-
-          fares.push(this._normalizeFare(
-            { origin, collectedAt, snapshotId, landingCode: landing.landingSlug },
-            {
-              dest,
-              fields: {
-                dateOut:   best.date,
-                dateIn:    null,
-                tripType:  'one_way',
-                price:     Math.round(best.price * 100) / 100,
-                deeplink:  buildDeeplink(origin, dest, best.date),
-              },
-            }
-          ));
+    for (const [dest, byMonth] of cells) {
+      for (const month of months) {
+        const cell = byMonth.get(month.key);
+        if (!cell) continue;
+        // Pick cheapest outbound day in the month
+        let best = null;
+        for (const p of cell.outbound.values()) {
+          if (!best || p.price < best.price) best = p;
         }
-      }
+        if (!best || best.price > 300) continue;
 
-      await page.close();
-    } finally {
-      await browser.close();
+        fares.push(this._normalizeFare(
+          { origin, collectedAt, snapshotId, landingCode: landing.landingSlug },
+          {
+            dest,
+            fields: {
+              dateOut:   best.date,
+              dateIn:    null,
+              tripType:  'one_way',
+              price:     Math.round(best.price * 100) / 100,
+              deeplink:  buildDeeplink(origin, dest, best.date),
+            },
+          }
+        ));
+      }
     }
 
     console.log(`[AegeanAirProvider] done — ${fares.length} one-way fares`);
@@ -554,73 +617,53 @@ class AegeanAirProvider extends BaseProvider {
   async collectWeekend(landing, options = {}) {
     const { snapshotId = 'manual' } = options;
     const origin = landing.homeAirportIata;
-    const months = monthsRange(this.monthsAhead);
     const collectedAt = new Date().toISOString();
 
     console.log(`\n[AegeanAir-Weekend] origin: ${origin}`);
-
-    const { browser, context } = await this._getBrowserContext();
+    const { months, allMonths, cells } = await this._prepare(landing);
     const pairs = [];
+    const MAX_LEG = 250;
 
-    try {
-      const page = await this._establishSession(context);
-      const grid = await this._collectAllCells(page, origin, months);
+    for (const [dest, byMonth] of cells) {
+      for (const month of months) {
+        const cell = byMonth.get(month.key);
+        if (!cell) continue;
+        // Fri 28+ returns Sun/Mon of the next month — covered by the next
+        // cell, which for the last visible month is the trailing one.
+        const returnPrices = AegeanAirProvider._returnPrices(byMonth, allMonths, month.key);
 
-      // We need next-month returns for Fri 28+ → Mon next-month. Pull one extra month.
-      // (Already covered for destinations whose next month is in `months`, but add
-      // a guard by fetching the month *after* the last one, on demand.)
-      for (const [dest, byMonth] of grid) {
-        for (const month of months) {
-          const cell = byMonth.get(month.key);
-          if (!cell) continue;
+        for (const [outDate, outFare] of cell.outbound) {
+          if (outFare.price > MAX_LEG) continue;
+          const day = new Date(outDate).getUTCDay();
+          if (day !== 5) continue; // Fridays only
 
-          // Build a combined return-price map (this month + next month outbound-side,
-          // which we already have if next is inside `months`).
-          const returnPrices = new Map(cell.inbound);
-          const nextIdx = months.findIndex(m => m.key === month.key) + 1;
-          const nextCell = nextIdx < months.length ? byMonth.get(months[nextIdx].key) : null;
-          if (nextCell) {
-            for (const [d, v] of nextCell.inbound) returnPrices.set(d, v);
-          }
+          for (const nights of [2, 3]) {
+            const ret = new Date(outDate);
+            ret.setUTCDate(ret.getUTCDate() + nights);
+            const retStr = ret.toISOString().substring(0, 10);
+            const retFare = returnPrices.get(retStr);
+            if (!retFare || retFare.price > MAX_LEG) continue;
 
-          const MAX_LEG = 250;
-          for (const [outDate, outFare] of cell.outbound) {
-            if (outFare.price > MAX_LEG) continue;
-            const day = new Date(outDate).getUTCDay();
-            if (day !== 5) continue; // Fridays only
-
-            for (const nights of [2, 3]) {
-              const ret = new Date(outDate);
-              ret.setUTCDate(ret.getUTCDate() + nights);
-              const retStr = ret.toISOString().substring(0, 10);
-              const retFare = returnPrices.get(retStr);
-              if (!retFare || retFare.price > MAX_LEG) continue;
-
-              const total = outFare.price + retFare.price;
-              pairs.push(this._normalizeFare(
-                { origin, collectedAt, snapshotId, landingCode: landing.landingSlug },
-                {
-                  dest,
-                  fields: {
-                    dateOut:       outDate,
-                    dateIn:        retStr,
-                    nights,
-                    tripType:      'weekend',
-                    price:         Math.round(total * 100) / 100,
-                    outboundPrice: outFare.price,
-                    returnPrice:   retFare.price,
-                    deeplink:      buildDeeplink(origin, dest, outDate, retStr),
-                  },
-                }
-              ));
-            }
+            const total = outFare.price + retFare.price;
+            pairs.push(this._normalizeFare(
+              { origin, collectedAt, snapshotId, landingCode: landing.landingSlug },
+              {
+                dest,
+                fields: {
+                  dateOut:       outDate,
+                  dateIn:        retStr,
+                  nights,
+                  tripType:      'weekend',
+                  price:         Math.round(total * 100) / 100,
+                  outboundPrice: outFare.price,
+                  returnPrice:   retFare.price,
+                  deeplink:      buildDeeplink(origin, dest, outDate, retStr),
+                },
+              }
+            ));
           }
         }
       }
-
-      await page.close();
-    } finally {
-      await browser.close();
     }
 
     console.log(`[AegeanAir-Weekend] done — ${pairs.length} weekend pairs`);
@@ -632,93 +675,58 @@ class AegeanAirProvider extends BaseProvider {
   async collectHoliday(landing, options = {}) {
     const { snapshotId = 'manual' } = options;
     const origin = landing.homeAirportIata;
-    const months = monthsRange(this.monthsAhead);
     const collectedAt = new Date().toISOString();
 
     console.log(`\n[AegeanAir-Holiday] origin: ${origin}`);
-
-    const { browser, context } = await this._getBrowserContext();
+    const { months, allMonths, cells } = await this._prepare(landing);
     const pairs = [];
+    const MAX_LEG = 300;
 
-    try {
-      const page = await this._establishSession(context);
-      const grid = await this._collectAllCells(page, origin, months);
+    for (const [dest, byMonth] of cells) {
+      for (const month of months) {
+        const cell = byMonth.get(month.key);
+        if (!cell) continue;
+        // Returns up to +15 nights: this month + the next (trailing) one.
+        const returnPrices = AegeanAirProvider._returnPrices(byMonth, allMonths, month.key);
 
-      // For holidays we need return dates up to 15 nights past end of month —
-      // fetch an extra trailing month for each destination just for returns.
-      const extraMonthApi = (() => {
-        const last = months[months.length - 1].key.split('-').map(Number);
-        const y = last[0], m = last[1];
-        const ny = m === 12 ? y + 1 : y;
-        const nm = m === 12 ? 1 : m + 1;
-        return { key: `${ny}-${String(nm).padStart(2, '0')}`, api: `${ny}-${nm}` };
-      })();
-
-      for (const [dest, byMonth] of grid) {
-        // Pull one extra month of return-side prices
-        let extraReturns = new Map();
-        try {
-          const extra = await this._fetchMonthPrices(page, origin, dest, extraMonthApi.api);
-          extraReturns = extra.inbound;
-          await sleep(100);
-        } catch {}
-
-        for (const month of months) {
-          const cell = byMonth.get(month.key);
-          if (!cell) continue;
-
-          // Build return-price lookup covering this month + next month + trailing extra
-          const returnPrices = new Map(cell.inbound);
-          const nextIdx = months.findIndex(m => m.key === month.key) + 1;
-          const nextCell = nextIdx < months.length ? byMonth.get(months[nextIdx].key) : null;
-          if (nextCell) for (const [d, v] of nextCell.inbound) returnPrices.set(d, v);
-          for (const [d, v] of extraReturns) returnPrices.set(d, v);
-
-          const MAX_LEG = 300;
-          let best = null;
-
-          for (const [outDate, outFare] of cell.outbound) {
-            if (outFare.price > MAX_LEG) continue;
-            const outObj = new Date(outDate);
-            for (let nights = 5; nights <= 15; nights++) {
-              const ret = new Date(outObj);
-              ret.setUTCDate(ret.getUTCDate() + nights);
-              const retStr = ret.toISOString().substring(0, 10);
-              const retFare = returnPrices.get(retStr);
-              if (!retFare || retFare.price > MAX_LEG) continue;
-              const total = outFare.price + retFare.price;
-              if (!best || total < best.total) {
-                best = {
-                  dateOut: outDate, dateIn: retStr, nights,
-                  outPrice: outFare.price, retPrice: retFare.price, total,
-                };
-              }
+        let best = null;
+        for (const [outDate, outFare] of cell.outbound) {
+          if (outFare.price > MAX_LEG) continue;
+          const outObj = new Date(outDate);
+          for (let nights = 5; nights <= 15; nights++) {
+            const ret = new Date(outObj);
+            ret.setUTCDate(ret.getUTCDate() + nights);
+            const retStr = ret.toISOString().substring(0, 10);
+            const retFare = returnPrices.get(retStr);
+            if (!retFare || retFare.price > MAX_LEG) continue;
+            const total = outFare.price + retFare.price;
+            if (!best || total < best.total) {
+              best = {
+                dateOut: outDate, dateIn: retStr, nights,
+                outPrice: outFare.price, retPrice: retFare.price, total,
+              };
             }
           }
-
-          if (!best) continue;
-          pairs.push(this._normalizeFare(
-            { origin, collectedAt, snapshotId, landingCode: landing.landingSlug },
-            {
-              dest,
-              fields: {
-                dateOut:       best.dateOut,
-                dateIn:        best.dateIn,
-                nights:        best.nights,
-                tripType:      'holiday',
-                price:         Math.round(best.total * 100) / 100,
-                outboundPrice: best.outPrice,
-                returnPrice:   best.retPrice,
-                deeplink:      buildDeeplink(origin, dest, best.dateOut, best.dateIn),
-              },
-            }
-          ));
         }
-      }
 
-      await page.close();
-    } finally {
-      await browser.close();
+        if (!best) continue;
+        pairs.push(this._normalizeFare(
+          { origin, collectedAt, snapshotId, landingCode: landing.landingSlug },
+          {
+            dest,
+            fields: {
+              dateOut:       best.dateOut,
+              dateIn:        best.dateIn,
+              nights:        best.nights,
+              tripType:      'holiday',
+              price:         Math.round(best.total * 100) / 100,
+              outboundPrice: best.outPrice,
+              returnPrice:   best.retPrice,
+              deeplink:      buildDeeplink(origin, dest, best.dateOut, best.dateIn),
+            },
+          }
+        ));
+      }
     }
 
     console.log(`[AegeanAir-Holiday] done — ${pairs.length} holiday pairs`);
